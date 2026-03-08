@@ -1,4 +1,3 @@
-// lib/drawService.ts
 import { Player, Team, DrawConfig } from "@/types";
 
 function shuffle<T>(array: T[]): T[] {
@@ -10,115 +9,144 @@ function shuffle<T>(array: T[]): T[] {
   return arr;
 }
 
-export function generateTeams(selectedPlayers: Player[], config: DrawConfig): Team[] {
-  const { numberOfTeams, playersPerTeam } = config;
+export function generateTeams(selectedPlayers: Player[], config: DrawConfig, mode: "balanced" | "random" = "balanced"): Team[] {
+  const { numberOfTeams } = config;
 
-  // Clone players to avoid mutation and shuffle
+  if (selectedPlayers.length < numberOfTeams) {
+    throw new Error("Número de jogadores insuficientes para o número de times.");
+  }
+
+  // Shuffle generally first
   const playersPool = shuffle(selectedPlayers);
 
-  // Filter existing captains
-  const captains = playersPool.filter((p) => p.isCaptain);
+  // Initialize Teams array
+  let teams: Team[] = [];
+
+  // --- RANDOM MODE ---
+  if (mode === "random") {
+    // Create empty teams
+    teams = Array.from({ length: numberOfTeams }, (_, i) => ({
+      id: i + 1,
+      name: `Time ${i + 1}`,
+      captain: null as unknown as Player, // Temporary, will be filled
+      players: [],
+      totalLevel: 0,
+    }));
+
+    // Sequential distribution (Round Robin)
+    playersPool.forEach((player, index) => {
+      const teamIndex = index % numberOfTeams;
+      const team = teams[teamIndex];
+
+      if (index < numberOfTeams) {
+        // First pass: assign captains
+        team.captain = player;
+        team.totalLevel += player.level;
+      } else {
+        // Subsequent passes: assign players
+        team.players.push(player);
+        team.totalLevel += player.level;
+      }
+    });
+
+    return teams;
+  }
+
+  // --- BALANCED MODE ---
+
+  // 1. Identify Captains
+  // We respect the 'isCaptain' flag if present.
+  const flaggedCaptains = playersPool.filter((p) => p.isCaptain);
   const others = playersPool.filter((p) => !p.isCaptain);
 
   let selectedCaptains: Player[] = [];
-  let remainingPlayers: Player[] = [];
+  let remainingPool: Player[] = [];
 
-  if (captains.length >= numberOfTeams) {
-    // If we have enough captains, pick N random captains
-    selectedCaptains = captains.slice(0, numberOfTeams);
-    // The rest become regular players
-    remainingPlayers = [...others, ...captains.slice(numberOfTeams)];
+  if (flaggedCaptains.length >= numberOfTeams) {
+    // Pick needed amount of random captains from the flagged list
+    selectedCaptains = flaggedCaptains.slice(0, numberOfTeams);
+    // Put unused captains back into the pool as normal players
+    remainingPool = [...others, ...flaggedCaptains.slice(numberOfTeams)];
   } else {
-    // If not enough captains, use all existing captains
-    selectedCaptains = [...captains];
-    // Fill the rest with highest level players from others (or random if levels equal)
-    const needed = numberOfTeams - captains.length;
-    // Sort others by level desc to pick best candidates for temp captain
+    // Not enough flagged captains
+    selectedCaptains = [...flaggedCaptains];
+    const needed = numberOfTeams - flaggedCaptains.length;
+
+    // Sort remaining by level desc to pick best temporary captains
     const sortedOthers = [...others].sort((a, b) => b.level - a.level);
 
-    const newCaptains = sortedOthers.slice(0, needed);
-    const rest = sortedOthers.slice(needed);
-
-    selectedCaptains = [...selectedCaptains, ...newCaptains];
-    remainingPlayers = rest;
+    selectedCaptains.push(...sortedOthers.slice(0, needed));
+    remainingPool.push(...sortedOthers.slice(needed));
   }
 
-  // Double check we have enough total players (captains + players)
-  const totalSlots = numberOfTeams * playersPerTeam;
-  if (selectedPlayers.length < totalSlots) {
-    throw new Error(
-      `Jogadores insuficientes. Necessário: ${totalSlots}, selecionado: ${selectedPlayers.length}. O sorteio exige exatamente ${playersPerTeam} jogadores por time.`,
-    );
-  }
-
-  // Initialize teams with captains
-  const teams: Team[] = selectedCaptains.map((captain, i) => ({
+  // Initialize Teams with Captains
+  teams = selectedCaptains.map((captain, i) => ({
     id: i + 1,
     name: `Time ${i + 1}`,
-    captain: captain,
+    captain,
     players: [],
-    // Add captain's level to total
     totalLevel: captain.level,
   }));
 
-  // Step 2: Distribute remaining players
-  // Snake draft based on team total level to balance
-  const remainingPool = [...remainingPlayers];
-  const byLevel = new Map<number, Player[]>();
-  for (const p of remainingPool) {
-    if (!byLevel.has(p.level)) byLevel.set(p.level, []);
-    byLevel.get(p.level)!.push(p);
+  // 2. Distribute Levantadores (Setters)
+  // Constraint: Try to limit to 2 per team (including captain).
+  // Strategy: Identify all remaining setters and distribute them to balance counts.
+  const levantadores = remainingPool.filter((p) => p.position === "levantador");
+  const nonLevantadores = remainingPool.filter((p) => p.position !== "levantador");
+
+  // Sort setters by level desc to balance skill if possible
+  levantadores.sort((a, b) => b.level - a.level);
+
+  // Helper function to count setters
+  const countLevantadores = (team: Team) => {
+    let count = 0;
+    if (team.captain.position === "levantador") count++;
+    count += team.players.filter((p) => p.position === "levantador").length;
+    return count;
+  };
+
+  for (const lev of levantadores) {
+    // strict sort inside loop ensures we always pick the team that needs setter most
+    teams.sort((a, b) => {
+      const countA = countLevantadores(a);
+      const countB = countLevantadores(b);
+      if (countA !== countB) return countA - countB;
+
+      // Secondary: Total Level (give to weaker team)
+      if (a.totalLevel !== b.totalLevel) return a.totalLevel - b.totalLevel;
+
+      // Tertiary: Player Count (give to smaller team)
+      return a.players.length + 1 - (b.players.length + 1);
+    });
+
+    const targetTeam = teams[0];
+    targetTeam.players.push(lev);
+    targetTeam.totalLevel += lev.level;
   }
 
-  const sortedLevels = Array.from(byLevel.keys()).sort((a, b) => b - a);
+  // 3. Distribute Remaining Players (Non-Setters)
+  // Sort by level desc (Snake Draft style logic by picking best for weakest team)
+  nonLevantadores.sort((a, b) => b.level - a.level);
 
-  // Flatten into sorted pool
-  const pool: Player[] = [];
-  for (const lvl of sortedLevels) {
-    const list = byLevel.get(lvl)!;
-    // Shuffle players of same level to add randomness
-    pool.push(...shuffle(list));
+  for (const player of nonLevantadores) {
+    // Sort teams to find the best candidate for the next player
+    teams.sort((a, b) => {
+      // Primary: Player Count (balance size first)
+      const sizeA = a.players.length + 1;
+      const sizeB = b.players.length + 1;
+      if (sizeA !== sizeB) return sizeA - sizeB;
+
+      // Secondary: Total Level (balance skill)
+      return a.totalLevel - b.totalLevel;
+    });
+
+    const targetTeam = teams[0];
+    targetTeam.players.push(player);
+    targetTeam.totalLevel += player.level;
   }
 
-  // Greedy assignment logic
-  // We want to fill players for each team until they reach playersPerTeam
-  // The captain is already in the team (though in this structure captain is separate property,
-  // logic typically counts captain as 1 player slot)
-
-  // Current logic creates teams of size (1 captain + playersPerTeam players)?
-  // Or (1 captain + (playersPerTeam - 1) players)?
-  // Based on your previous code: `const playerSlots = playersPerTeam - 1;` indicates captain counts towards limit.
-
-  // However, variable `playerSlots` was defined but not used correctly in loop logic in my previous view?
-  // Let's refine the distribution loop
-
-  const slotsToFill = playersPerTeam - 1; // Since captain is 1 slot
-
-  // Track how many players added to each team
-  const teamsPlayersCount = new Array(numberOfTeams).fill(0);
-
-  for (const player of pool) {
-    // Find eligible teams (those that still need players)
-    // Sort them by totalLevel ascending (weakest team picks first - "Greedy Balance")
-    // If levels equal, maybe pick random or by index (stable sort)
-
-    const candidates = teams
-      .map((t, idx) => ({ idx, totalLevel: t.totalLevel, count: teamsPlayersCount[idx] }))
-      .filter((c) => c.count < slotsToFill)
-      .sort((a, b) => a.totalLevel - b.totalLevel);
-
-    if (candidates.length === 0) {
-      // All teams full or no players left?
-      // If pool has more players than needed, they get left out?
-      break;
-    }
-
-    // Pick the weakest team
-    const bestTeamIdx = candidates[0].idx;
-    teams[bestTeamIdx].players.push(player);
-    teams[bestTeamIdx].totalLevel += player.level;
-    teamsPlayersCount[bestTeamIdx]++;
-  }
+  // Restore original order by ID to avoid visual jumping randomly?
+  teams.sort((a, b) => a.id - b.id);
 
   return teams;
 }

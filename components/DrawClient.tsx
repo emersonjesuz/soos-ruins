@@ -153,6 +153,7 @@ export default function DrawClient({ players }: { players: Player[] }) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [showConfig, setShowConfig] = useState(true);
+  const [drawMode, setDrawMode] = useState<"balanced" | "random">("balanced");
   const resultsRef = useRef<HTMLDivElement>(null);
 
   const togglePlayer = (id: string) => {
@@ -171,7 +172,7 @@ export default function DrawClient({ players }: { players: Player[] }) {
     setError(null);
     const selectedPlayers = players.filter((p) => selected.has(p.id));
     try {
-      const result = generateTeams(selectedPlayers, config);
+      const result = generateTeams(selectedPlayers, config, drawMode);
       setTeams(result);
       setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch (e) {
@@ -206,8 +207,16 @@ export default function DrawClient({ players }: { players: Player[] }) {
   const captains = players.filter((p) => p.isCaptain);
   const selectedList = players.filter((p) => selected.has(p.id));
   const selectedCaptains = selectedList.filter((p) => p.isCaptain);
-  const valid =
-    selectedCaptains.length >= config.numberOfTeams && selectedList.length >= config.numberOfTeams * config.playersPerTeam;
+
+  const valid = drawMode === "random" ? selectedList.length >= config.numberOfTeams : selectedList.length >= config.numberOfTeams; // Relaxed constraint for balanced too as per improved logic
+  // But maybe keep strict check if user wants?
+  // Let's stick to simple "enough players for teams" check.
+  // And warning about captains if in balanced mode can be visual, not blocking?
+  // The previous code had: valid = selectedCaptains.length >= ...
+  // I should enable button even if not marked captains, because auto-captain logic exists now.
+
+  // Re-evaluating validation:
+  const canDraw = selectedList.length >= config.numberOfTeams;
 
   return (
     <div className="p-8 animate-fade-in">
@@ -273,6 +282,32 @@ export default function DrawClient({ players }: { players: Player[] }) {
                         {n}
                       </button>
                     ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-[var(--text-muted)] uppercase tracking-wider block mb-2">Modo de Sorteio</label>
+                  <div className="flex gap-2 bg-[var(--court-line)]/5 rounded-lg p-1">
+                    <button
+                      onClick={() => setDrawMode("balanced")}
+                      className={`flex-1 py-1.5 rounded text-xs font-semibold transition-all ${
+                        drawMode === "balanced"
+                          ? "bg-[var(--gold)] text-[var(--dark)]"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      }`}
+                    >
+                      Equilibrado
+                    </button>
+                    <button
+                      onClick={() => setDrawMode("random")}
+                      className={`flex-1 py-1.5 rounded text-xs font-semibold transition-all ${
+                        drawMode === "random"
+                          ? "bg-[var(--gold)] text-[var(--dark)]"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      }`}
+                    >
+                      Aleatório
+                    </button>
                   </div>
                 </div>
 

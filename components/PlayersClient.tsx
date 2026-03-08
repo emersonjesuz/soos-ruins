@@ -112,7 +112,7 @@ export default function PlayersClient({ initialPlayers }: { initialPlayers: Play
 
       // Send to API sequentially to avoid race conditions/overload if many
       // Or separate bulk API
-      const createdPlayers = [];
+      const createdPlayers: Player[] = [];
       for (const player of newPlayers) {
         try {
           const res = await fetch("/api/players", {
@@ -121,7 +121,7 @@ export default function PlayersClient({ initialPlayers }: { initialPlayers: Play
             body: JSON.stringify(player),
           });
           if (res.ok) {
-            const created = await res.json();
+            const created = (await res.json()) as Player;
             createdPlayers.push(created);
           }
         } catch (e) {
@@ -146,7 +146,7 @@ export default function PlayersClient({ initialPlayers }: { initialPlayers: Play
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(data),
         });
-        const updated = await res.json();
+        const updated = (await res.json()) as Player;
         setPlayers((ps) => ps.map((p) => (p.id === editingId ? updated : p)));
       } else {
         const res = await fetch("/api/players", {
@@ -154,12 +154,29 @@ export default function PlayersClient({ initialPlayers }: { initialPlayers: Play
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(data),
         });
-        const created = await res.json();
+        const created = (await res.json()) as Player;
         setPlayers((ps) => [created, ...ps]);
       }
       setShowModal(false);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const toggleCaptain = async (player: Player) => {
+    // Optimistic update
+    const updated = { ...player, isCaptain: !player.isCaptain };
+    setPlayers((ps) => ps.map((p) => (p.id === player.id ? updated : p)));
+
+    try {
+      await fetch(`/api/players/${player.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated),
+      });
+    } catch (e) {
+      setPlayers((ps) => ps.map((p) => (p.id === player.id ? player : p)));
+      console.error(e);
     }
   };
 
@@ -316,14 +333,18 @@ export default function PlayersClient({ initialPlayers }: { initialPlayers: Play
                     </span>
                   </td>
                   <td className="px-6 py-4">
-                    {player.isCaptain ? (
-                      <div className="flex items-center gap-1.5 text-[var(--gold)]">
-                        <Crown size={14} />
-                        <span className="text-xs font-semibold">Capitão</span>
-                      </div>
-                    ) : (
-                      <span className="text-xs text-[var(--text-muted)]">—</span>
-                    )}
+                    <button
+                      onClick={() => toggleCaptain(player)}
+                      className={`flex items-center gap-1.5 px-2 py-1 rounded transition-all ${
+                        player.isCaptain
+                          ? "bg-[var(--gold)]/10 text-[var(--gold)] hover:bg-[var(--gold)]/20"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--court-line)]/20"
+                      }`}
+                      title={player.isCaptain ? "Remover capitão" : "Promover a capitão"}
+                    >
+                      <Crown size={14} className={player.isCaptain ? "fill-[var(--gold)]" : "opacity-30"} />
+                      <span className="text-xs font-semibold">{player.isCaptain ? "Capitão" : "—"}</span>
+                    </button>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2 justify-end">
