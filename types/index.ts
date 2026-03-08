@@ -20,7 +20,6 @@ export interface Player {
 export interface Team {
   id: number;
   name: string;
-  captain: Player;
   players: Player[];
   totalLevel: number;
 }
@@ -28,6 +27,7 @@ export interface Team {
 export interface DrawConfig {
   numberOfTeams: number;
   playersPerTeam: number;
+  mode: "balanced" | "random";
 }
 
 export interface DrawResult {
