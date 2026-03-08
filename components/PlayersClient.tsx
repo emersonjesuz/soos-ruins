@@ -112,7 +112,7 @@ export default function PlayersClient({ initialPlayers }: { initialPlayers: Play
 
       // Send to API sequentially to avoid race conditions/overload if many
       // Or separate bulk API
-      const createdPlayers = [];
+      const createdPlayers: Player[] = [];
       for (const player of newPlayers) {
         try {
           const res = await fetch("/api/players", {
